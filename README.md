@@ -99,7 +99,7 @@ struct DayNightCycle : Plugin {
 int main() {
     ...
 
-    ecs_add_plugin<DayNightCycle>()
+    ecs_add_plugin<DayNightCycle>();
 }
 ```
 
@@ -136,19 +136,55 @@ int main() {
     ecs_get_resource<TimeOfDay>()->time = 4;
 }
 ```
-Run your systems
+Add schedules to trigger the systems you want (default: SETUP, UPDATE)
 ```cpp
+...
+struct advance_timeofday : System {
+    void run() override {
+        ecs_get_resource<TimeOfDay>()->time += 1;
+    }
+};
+
+struct prepare_new_day : System {
+    void run() override {
+        ecs_get_resource<TimeOfDay>()->time = 0;
+    }
+};
+
+/// SCHEDULE CALLED WHEN A NEW DAY START
+struct NEWDAY{};
+
 int main() {
     ...
+    /// CAN NOW BE USED ON A NEW SYSTEM TO TRIGGER IT WHEN ITS A NEW DAY
+    ecs_add_system_schedule<NEWDAY>();
 
+    ecs_add_system<advance_timeofday>();
+    ecs_add_system<prepare_new_day>();
+
+    /// DOES NOTHING BUT CAN BE USEFULL TO UNDERSTAND THE CODE
+    ecs_change_system_schedule<advance_timeofday,UPDATE>();
+    /// CHANGE prepare_new_day SCHEDULE TO THE NEWDAY SCHEDULE
+    ecs_change_system_schedule<prepare_new_day,NEWDAY>();
+}
+```
+
+Run your systems
+```cpp
+...
+
+int main() {
+    ...
+    /// RUN EVERY SYSTEM WITH NON SPECIFIED OR UPDATE SCHEDULE
     ecs_run_systems();
+
+    /// RUN EVERY SYSTEM WITH THE NEWDAY SCHEDULE
+    ecs_run_systems<NEWDAY>();
 }
 ```
 
 ## FUTURE FEATURE
 
-- Scheduling system to run systems at different times (startup,update)
-- Signal system to trigger systems on demand
 - Multithreading system if that dont depend on each other
 
 ## CONTRIBUTION

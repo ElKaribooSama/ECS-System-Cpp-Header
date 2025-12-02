@@ -10,9 +10,6 @@
 #include <stack>
 #include <set>
 
-
-
-
 /////////////////////////////// COMPONENTS DECLARATION ////////////////////////////////
 
 using ComponentID = std::uint8_t; // Component ids
@@ -29,7 +26,10 @@ const std::uint32_t MAX_ENTITIES = 5000;
 
 ///////////////////////////////// SYSTEMS DECLARATION /////////////////////////////////
 
+using ScheduleID = std::uint32_t;
+
 struct System {
+    std::size_t schedule = 1;
 	std::set<EntityID> entities;
     virtual void run() = 0;
 };
@@ -49,6 +49,10 @@ std::unordered_map<const char*, Signature> ecs_system_signatures{};
 std::unordered_map<const char*, std::size_t> ecs_systems{};
 /// @brief store system pointers
 std::vector<std::shared_ptr<System>> ecs_systems_vector{};
+/// @brief maps schedule name to schedule id
+std::unordered_map<const char*, ScheduleID> ecs_system_schedules{};
+/// @brief number of active schedules
+ScheduleID schedulecount = 0;
 
 /// @brief map plugin names to plugin pointers
 std::unordered_map<const char*, std::shared_ptr<Plugin>> ecs_plugins;
@@ -58,16 +62,35 @@ std::stack<EntityID> ecs_available_entities_stack{};
 /// @brief array containing all entity component signatures
 Signature ecs_entity_signatures[MAX_ENTITIES];
 
-////////////////////////////////////// ECS SETUP //////////////////////////////////////
-
-void ecs_setup() {
-    for (EntityID entity = 0; entity < MAX_ENTITIES; ++entity) ecs_available_entities_stack.push(entity);
-}
-
 //////////////////////////////////// DECLARATIONS ////////////////////////////////////
 
 void ecs_entity_set_signature(EntityID entity, Signature signature);
 Signature ecs_entity_get_signature(EntityID entity);
+
+template<typename SCHEDULE>
+void ecs_add_system_schedule();
+
+////////////////////////////////////// ECS SETUP //////////////////////////////////////
+
+/// @brief SETUP schedule
+struct SETUP {};
+
+/// @brief UPDATE schedule
+struct UPDATE {};
+
+void ecs_setup() {
+    for (EntityID entity = 0; entity < MAX_ENTITIES; ++entity) ecs_available_entities_stack.push(entity);
+    ecs_add_system_schedule<SETUP>();
+    ecs_add_system_schedule<UPDATE>();
+}
+
+void ecs_cleanup() {
+    for (auto const& pair : ecs_resources) {
+        auto const& resource = pair.second;
+        free(resource);
+    }
+}
+
 
 /////////////////////////////////// COMPONENTS IMPL ///////////////////////////////////
 
@@ -258,23 +281,6 @@ Signature ecs_entity_get_signature(EntityID entity) {
 
 /////////////////////////////////// SYSTEMS IMPL ///////////////////////////////////
 
-// ecs_add_system<print_color,ComponentList<Color>>(); specialization
-
-// template<typename SYSTEM,template<typename...> class LIST,typename COMPONENT0,typename... COMPONENT1TON>
-// void ecs_add_system() {
-//     const char* typeName = typeid(SYSTEM).name();
-
-//     assert(ecs_systems.find(typeName) == ecs_systems.end() && "adding system more than once.");
-
-    
-//     ecs_system_signatures[typeName].set(ecs_get_component_type<COMPONENT0>());
-//     (ecs_system_signatures[typeName].set(ecs_get_component_type<COMPONENT1TON>()), ...);
-    
-//     auto system = std::make_shared<SYSTEM>();
-//     ecs_systems.insert({typeName, system});
-// }
-
-
 template<typename SYSTEM>
 void ecs_add_system() {
     const char* typeName = typeid(SYSTEM).name();
@@ -307,7 +313,7 @@ template<typename SYSTEM>
 void ecs_remove_system() {
     const char* typeName = typeid(SYSTEM).name();
 
-    assert(ecs_systems.find(typeName) != ecs_systems.end() && "removing system that dosnt exist.");
+    assert(ecs_systems.find(typeName) == ecs_systems.end() && "removing system that dosnt exist.");
 
     ecs_system_signatures[typeName].reset();
 
@@ -316,14 +322,49 @@ void ecs_remove_system() {
     ecs_systems_vector[index] = 0;
 }
 
+template<typename SYSTEM,typename SCHEDULE>
+void ecs_change_system_schedule() {
+    const char* systemTypeName = typeid(SYSTEM).name();
+    const char* scheduleTypeName = typeid(SCHEDULE).name();
+
+    // assert not working as intendd for some reason
+    // assert(ecs_system_schedules.find(scheduleTypeName) == ecs_system_schedules.end() && "using schedule that dosnt exist.");
+    // assert(ecs_systems.find(systemTypeName) == ecs_systems.end() && "using system that dosnt exist.");
+
+    ecs_systems_vector[ecs_systems[systemTypeName]]->schedule = ecs_system_schedules[scheduleTypeName];
+}
+
+template<typename SCHEDULE>
+void ecs_add_system_schedule() {
+    const char* typeName = typeid(SCHEDULE).name();
+
+    assert(ecs_system_schedules.find(typeName) == ecs_system_schedules.end() && "adding schedule that already exist.");
+
+    ecs_system_schedules.insert({typeName, schedulecount});
+    schedulecount++;
+}
+
+/// @brief run all system with no schedules or update schedule
 void ecs_run_systems() {
+    constexpr ScheduleID updateScheduleID = 1;
+
     for (auto const& system : ecs_systems_vector) {
-        system->run();
+        if (system->schedule == updateScheduleID) system->run();
+    }
+}
+
+/// @brief run all system in in order of addition with the that have the given schedule
+template<typename SCHEDULE>
+void ecs_run_systems() {
+    const char* typeName = typeid(SCHEDULE).name();
+    const ScheduleID scheduleId = ecs_system_schedules[typeName];
+
+    for (auto const& system : ecs_systems_vector) {
+        if (system->schedule == scheduleId) system->run();
     }
 }
 
 /////////////////////////////////// PLUGINS IMPL ///////////////////////////////////
-
 
 template<typename PLUGIN>
 void ecs_add_plugin() {
@@ -360,7 +401,7 @@ template<typename RESOURCE>
 void ecs_remove_resource() {
     const char* typeName = typeid(RESOURCE).name();
     
-    assert(ecs_resources.find(typeName) != ecs_resources.end() && "Removing resource that is not registered.");
+    assert(ecs_resources.find(typeName) == ecs_resources.end() && "Removing resource that is not registered.");
     
     free(ecs_resources[typeName]);
     ecs_resources.erase(typeName);
@@ -370,7 +411,7 @@ template<typename RESOURCE>
 RESOURCE* ecs_get_resource() {
     const char* typeName = typeid(RESOURCE).name();
 
-    assert(ecs_resources.find(typeName) != ecs_resources.end() && "Getting resource that is not registered.");
+    assert(ecs_resources.find(typeName) == ecs_resources.end() && "Getting resource that is not registered.");
 
     return (RESOURCE*)ecs_resources[typeName];
 }
