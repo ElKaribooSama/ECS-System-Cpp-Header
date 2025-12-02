@@ -137,4 +137,4 @@ int main() {
 
 Contributions are welcomed
 
-## LICENCE
+## LICENCE MIT
