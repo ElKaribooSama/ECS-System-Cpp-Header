@@ -31,14 +31,28 @@ struct print_timeofday : System {
     }
 };
 
+struct advance_timeofday : System {
+    void run() override {
+        ecs_get_resource<TimeOfDay>()->time += 1;
+    }
+};
+
+struct DayNightCycle : Plugin {
+    void setup() override {
+        ecs_add_system<print_timeofday>();
+        ecs_add_system<advance_timeofday>();
+    }
+};
+
 int main() {
     ecs_setup();
     ecs_register_component<Color>();
     ecs_add_resource<TimeOfDay>();
+    ecs_add_plugin<DayNightCycle>();
+    
 
     ecs_add_system<print_color,Color>();
-    ecs_add_system<print_timeofday>();
-    
+
     EntityID entity1 = ecs_add_entity();
     EntityID entity2 = ecs_add_entity();
     EntityID entity3 = ecs_add_entity();
@@ -57,10 +71,9 @@ int main() {
     entity3_color.r = 0;
     entity3_color.g = 12;
     entity3_color.b = 79;
-
-    ecs_get_resource<TimeOfDay>()->time = 4;
     
     ecs_run_systems();
-    ecs_cleanup();
+    ecs_run_systems();
+    ecs_run_systems();
 }
 

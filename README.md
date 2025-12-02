@@ -41,7 +41,8 @@ int main() {
 ```
 
 Add your systems with the components they affect
-WARNING: the systems are running in the opposite order they were added
+
+~~WARNING: the systems are running in the opposite order they were added~~
 ```cpp
 
 ...
@@ -72,6 +73,33 @@ int main() {
     ecs_add_system<print_color,Color>(); // RUNS SECOND
     /// SYSTEM WILL AFFECT NO ENTITIES
     ecs_add_system<print_timeofday>(); // RUNS FIRST
+}
+```
+You can also add systems through plugins
+```cpp
+struct advance_timeofday : System {
+    void run() override {
+        ecs_get_resource<TimeOfDay>()->time += 1;
+    }
+};
+
+struct print_timeofday : System {
+    void run() override {
+        std::cout << "its " << ecs_get_resource<TimeOfDay>()->time << " o'clock\n";
+    }
+};
+
+struct DayNightCycle : Plugin {
+    void setup() override {
+        ecs_add_system<print_timeofday>();
+        ecs_add_system<advance_timeofday>();
+    }
+};
+
+int main() {
+    ...
+
+    ecs_add_plugin<DayNightCycle>()
 }
 ```
 
@@ -117,18 +145,8 @@ int main() {
 }
 ```
 
-Call ecs_cleanup to free all alocated pointers (not needed if no resources are registered)
-```cpp
-int main() {
-    ...
-
-    ecs_cleanup();
-}
-```
-
 ## FUTURE FEATURE
 
-- Plugin system to add systems easily.
 - Scheduling system to run systems at different times (startup,update)
 - Signal system to trigger systems on demand
 - Multithreading system if that dont depend on each other

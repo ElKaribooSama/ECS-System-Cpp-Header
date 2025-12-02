@@ -4,10 +4,14 @@
 #include <unordered_map>
 #include <assert.h>
 #include <cstdint>
+#include <vector>
 #include <memory>
 #include <bitset>
 #include <stack>
 #include <set>
+
+
+
 
 /////////////////////////////// COMPONENTS DECLARATION ////////////////////////////////
 
@@ -23,7 +27,6 @@ using EntityID = std::uint32_t; // Entity Ids
 using Signature = std::bitset<MAX_COMPONENTS>;
 const std::uint32_t MAX_ENTITIES = 5000;
 
-
 ///////////////////////////////// SYSTEMS DECLARATION /////////////////////////////////
 
 struct System {
@@ -31,27 +34,34 @@ struct System {
     virtual void run() = 0;
 };
 
+///////////////////////////////// PLUGINS DECLARATION /////////////////////////////////
+
+struct Plugin {
+    virtual void setup() = 0;
+};
+
 /////////////////////////////////// ECS VARIABLES /////////////////////////////////////
 
 std::unordered_map<const char*, void*> ecs_resources;
-// store each system required components
-std::unordered_map<const char*, Signature> ecs_system_signatures{}; 
-std::unordered_map<const char*, std::shared_ptr<System>> ecs_systems{};
+/// @brief map system names to their signature
+std::unordered_map<const char*, Signature> ecs_system_signatures{};
+/// @brief map system names to their position in the system_vector
+std::unordered_map<const char*, std::size_t> ecs_systems{};
+/// @brief store system pointers
+std::vector<std::shared_ptr<System>> ecs_systems_vector{};
 
+/// @brief map plugin names to plugin pointers
+std::unordered_map<const char*, std::shared_ptr<Plugin>> ecs_plugins;
+
+/// @brief stack containing the available entity ids
 std::stack<EntityID> ecs_available_entities_stack{};
+/// @brief array containing all entity component signatures
 Signature ecs_entity_signatures[MAX_ENTITIES];
 
 ////////////////////////////////////// ECS SETUP //////////////////////////////////////
 
 void ecs_setup() {
     for (EntityID entity = 0; entity < MAX_ENTITIES; ++entity) ecs_available_entities_stack.push(entity);
-}
-
-void ecs_cleanup() {
-    for (auto const& pair : ecs_resources) {
-        auto const& resource = pair.second;
-        free(resource);
-    }
 }
 
 //////////////////////////////////// DECLARATIONS ////////////////////////////////////
@@ -207,7 +217,7 @@ inline void ecs_remove_entity(EntityID entity) {
 
     // Notify each systems that an entity has been destroyed
     for (auto const& pair : ecs_systems) {
-        auto const& system = pair.second;
+        auto const& system = ecs_systems_vector[pair.second];
 
         system->entities.erase(entity);
     }
@@ -228,7 +238,7 @@ void ecs_entity_set_signature(EntityID entity,Signature entitySignature) {
     for (auto const& pair : ecs_systems) {
 
         auto const& systemtype = pair.first;
-        auto const& system = pair.second;
+        auto const& system = ecs_systems_vector[pair.second];
         auto const& systemSignature = ecs_system_signatures[systemtype];
 
         if ((entitySignature & systemSignature) == systemSignature) {
@@ -248,6 +258,23 @@ Signature ecs_entity_get_signature(EntityID entity) {
 
 /////////////////////////////////// SYSTEMS IMPL ///////////////////////////////////
 
+// ecs_add_system<print_color,ComponentList<Color>>(); specialization
+
+// template<typename SYSTEM,template<typename...> class LIST,typename COMPONENT0,typename... COMPONENT1TON>
+// void ecs_add_system() {
+//     const char* typeName = typeid(SYSTEM).name();
+
+//     assert(ecs_systems.find(typeName) == ecs_systems.end() && "adding system more than once.");
+
+    
+//     ecs_system_signatures[typeName].set(ecs_get_component_type<COMPONENT0>());
+//     (ecs_system_signatures[typeName].set(ecs_get_component_type<COMPONENT1TON>()), ...);
+    
+//     auto system = std::make_shared<SYSTEM>();
+//     ecs_systems.insert({typeName, system});
+// }
+
+
 template<typename SYSTEM>
 void ecs_add_system() {
     const char* typeName = typeid(SYSTEM).name();
@@ -255,8 +282,10 @@ void ecs_add_system() {
     assert(ecs_systems.find(typeName) == ecs_systems.end() && "adding system more than once.");
 
     ecs_system_signatures[typeName].reset();
+
     auto system = std::make_shared<SYSTEM>();
-    ecs_systems.insert({typeName, system});
+    ecs_systems_vector.push_back(system);
+    ecs_systems.insert({typeName, ecs_systems_vector.size() -1});
 }
 
 template<typename SYSTEM,typename COMPONENT0,typename... COMPONENT1TON>
@@ -270,30 +299,66 @@ void ecs_add_system() {
     (ecs_system_signatures[typeName].set(ecs_get_component_type<COMPONENT1TON>()), ...);
     
     auto system = std::make_shared<SYSTEM>();
-    ecs_systems.insert({typeName, system});
+    ecs_systems_vector.push_back(system);
+    ecs_systems.insert({typeName, ecs_systems_vector.size() -1});
+}
+
+template<typename SYSTEM>
+void ecs_remove_system() {
+    const char* typeName = typeid(SYSTEM).name();
+
+    assert(ecs_systems.find(typeName) != ecs_systems.end() && "removing system that dosnt exist.");
+
+    ecs_system_signatures[typeName].reset();
+
+    std::size_t index = ecs_systems[typeName];
+    ecs_systems.erase(typeName);
+    ecs_systems_vector[index] = 0;
 }
 
 void ecs_run_systems() {
-    for (auto const& pair : ecs_systems) {
-        auto const& system = pair.second;
+    for (auto const& system : ecs_systems_vector) {
         system->run();
     }
 }
 
+/////////////////////////////////// PLUGINS IMPL ///////////////////////////////////
+
+
+template<typename PLUGIN>
+void ecs_add_plugin() {
+    const char* typeName = typeid(PLUGIN).name();
+    
+    assert(ecs_plugins.find(typeName) == ecs_plugins.end() && "Registering plugin more than once.");
+    
+    auto plugin = std::make_shared<PLUGIN>();
+    ecs_plugins.insert({typeName, plugin});
+    ecs_plugins[typeName]->setup();
+}
+
+template<typename PLUGIN>
+void ecs_remove_plugin() {
+    const char* typeName = typeid(PLUGIN).name();
+    
+    assert(ecs_plugins.find(typeName) == ecs_plugins.end() && "Removing plugin that is not registered.");
+    
+    ecs_plugins.erase(typeName);
+}
+
 ////////////////////////////////// RESOURCES IMPL //////////////////////////////////
 
-template<typename T>
+template<typename RESOURCE>
 void ecs_add_resource() {
-    const char* typeName = typeid(T).name();
+    const char* typeName = typeid(RESOURCE).name();
     
     assert(ecs_resources.find(typeName) == ecs_resources.end() && "Registering resource more than once.");
     
-    ecs_resources.insert({typeName, malloc(sizeof(T))});
+    ecs_resources.insert({typeName, (void *)new RESOURCE()});
 }
 
-template<typename T>
+template<typename RESOURCE>
 void ecs_remove_resource() {
-    const char* typeName = typeid(T).name();
+    const char* typeName = typeid(RESOURCE).name();
     
     assert(ecs_resources.find(typeName) != ecs_resources.end() && "Removing resource that is not registered.");
     
@@ -301,13 +366,13 @@ void ecs_remove_resource() {
     ecs_resources.erase(typeName);
 }
 
-template<typename T>
-T* ecs_get_resource() {
-    const char* typeName = typeid(T).name();
+template<typename RESOURCE>
+RESOURCE* ecs_get_resource() {
+    const char* typeName = typeid(RESOURCE).name();
 
     assert(ecs_resources.find(typeName) != ecs_resources.end() && "Getting resource that is not registered.");
 
-    return (T*)ecs_resources[typeName];
+    return (RESOURCE*)ecs_resources[typeName];
 }
 
 #endif
