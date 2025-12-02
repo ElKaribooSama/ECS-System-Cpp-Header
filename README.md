@@ -1,2 +1,140 @@
-# ECS-System-C-Header
+# ECS-System-Cpp-Header
 A header only c++ ecs system to use however ones want
+
+## usage
+Download the ecs.h file and add it to your project.
+
+call ecs_setup() before doing anything else with it.
+```cpp
+int main() {
+    ecs_setup();
+}
+```
+
+Register your Resources and Components
+```cpp
+/// BOTH RESOURCES AND COMPONENTS ARE SIMPLE STRUCTS
+
+struct TimeOfDay {
+    int time = 0;
+};
+
+struct Color {
+    std::uint8_t r = 0;
+    std::uint8_t g = 0;
+    std::uint8_t b = 0;
+
+    std::string serialize() {
+        return "my color is" +
+        " r: " + std::to_strin(r)+
+        " g: " + std::to_string(g) +
+        " b: " + std::to_string(b);
+    }
+};
+
+int main() {
+    ...
+
+    ecs_register_component<Color>();
+    ecs_add_resource<TimeOfDay>();
+}
+```
+
+Add your systems with the components they affect
+WARNING: the systems are running in the opposite order they were added
+```cpp
+
+...
+
+/// SYSTEMS ARE STRUCT WITH A void run() FUNCTION
+/// AND AN ENTITYID ARRAY FILLED WITH THE ENTITIES THEY AFFECT
+/// THE AFFECTED ENTITIES DEPEND ON THE COMPONENTS THE SYSTEM WAS ADDED WITH
+
+struct print_timeofday : System {
+    void run() override {
+        std::cout << "its " << ecs_get_resource<TimeOfDay>()->time << " o'clock\n";
+    }
+};
+
+struct print_color : System {
+    void run() override {
+        for (const auto& entity : entities) {
+            Color* color = ecs_get_component<Color>(entity);
+            std::cout << color->serialize() << '\n';
+        }
+    }
+};
+
+int main() {
+    ...
+
+    /// SYSTEM WILL AFFECT ENTITIES WITH A COLOR COMPONENTS
+    ecs_add_system<print_color,Color>(); // RUNS SECOND
+    /// SYSTEM WILL AFFECT NO ENTITIES
+    ecs_add_system<print_timeofday>(); // RUNS FIRST
+}
+```
+
+Create your entities, add and fill the components (optional if component has a base value)
+```cpp
+int main() {
+    ...
+
+    EntityID entity1 = ecs_add_entity();
+    EntityID entity2 = ecs_add_entity();
+    EntityID entity3 = ecs_add_entity();
+
+    Color& entity1_color = ecs_add_component<Color>(entity1);
+    entity1_color.r = 122;
+    entity1_color.g = 17;
+    entity1_color.b = 0;
+
+    Color& entity2_color = ecs_add_component<Color>(entity2);
+    entity2_color.r = 0;
+    entity2_color.g = 245;
+    entity2_color.b = 178;
+
+    Color& entity3_color = ecs_add_component<Color>(entity3);
+    entity3_color.r = 0;
+    entity3_color.g = 12;
+    entity3_color.b = 79;
+}
+```
+Get and update your resources
+```cpp
+int main() {
+    ...
+
+    ecs_get_resource<TimeOfDay>()->time = 4;
+}
+```
+Run your systems
+```cpp
+int main() {
+    ...
+
+    ecs_run_systems();
+}
+```
+
+Call ecs_cleanup to free all alocated pointers (not needed if no resources are registered)
+```cpp
+int main() {
+    ...
+
+    ecs_cleanup();
+}
+```
+
+## FUTURE FEATURE
+
+- Plugin system to add systems easily.
+- Scheduling system to run systems at different times (startup,update)
+- Signal system to trigger systems on demand
+- Multithreading system if that dont depend on each other
+
+## CONTRIBUTION
+
+Contributions are welcomed
+
+## LICENCE
